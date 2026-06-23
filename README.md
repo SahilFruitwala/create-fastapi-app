@@ -48,6 +48,7 @@ create-fastapi-app [name] [options]
 | `--db`, `--database` | Database: `postgres` or `sqlite`. | `postgres` |
 | `--here` | Scaffold into the current directory instead of a new one. | off |
 | `--alembic` / `--no-alembic` | Include or skip Alembic migrations. | included |
+| `--install` / `--no-install` | Install dependencies after scaffolding (creates the venv via the chosen manager). | installed |
 | `-y`, `--yes` | Accept all defaults without prompting. | off |
 
 Anything you don't pass as a flag is prompted for interactively. With `--yes`

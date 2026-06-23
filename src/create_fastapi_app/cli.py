@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import argparse
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -68,6 +70,34 @@ def _prompt_database() -> str:
         print("Please enter 1 or 2.")
 
 
+def _install_commands(manager: str) -> list[list[str]]:
+    """Shell commands to create an environment and install the project."""
+    if manager == "uv":
+        return [["uv", "venv"], ["uv", "pip", "install", "-e", "."]]
+    if manager == "pdm":
+        return [["pdm", "install"]]
+    # pip
+    return [
+        [sys.executable, "-m", "venv", ".venv"],
+        [".venv/bin/python", "-m", "pip", "install", "-e", "."],
+    ]
+
+
+def _run_install(target: Path, manager: str) -> bool:
+    """Run the install commands in *target*. Returns True on success."""
+    if shutil.which(manager) is None and manager != "pip":
+        print(f"  ! '{manager}' not found on PATH; skipping install.")
+        return False
+    for cmd in _install_commands(manager):
+        printable = " ".join(cmd)
+        print(f"  $ {printable}")
+        result = subprocess.run(cmd, cwd=target)
+        if result.returncode != 0:
+            print(f"  ! command failed ({printable}); stopping install.")
+            return False
+    return True
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="create-fastapi-app",
@@ -98,6 +128,15 @@ def main(argv: list[str] | None = None) -> int:
     alembic_group.add_argument(
         "--no-alembic", dest="alembic", action="store_false",
         help="skip Alembic migrations",
+    )
+    install_group = parser.add_mutually_exclusive_group()
+    install_group.add_argument(
+        "--install", dest="install", action="store_true", default=None,
+        help="install dependencies after scaffolding (default)",
+    )
+    install_group.add_argument(
+        "--no-install", dest="install", action="store_false",
+        help="skip installing dependencies",
     )
     parser.add_argument(
         "-y", "--yes", action="store_true",
@@ -138,6 +177,13 @@ def main(argv: list[str] | None = None) -> int:
     else:
         alembic = True
 
+    if args.install is not None:
+        install = args.install
+    elif interactive:
+        install = _prompt_yes_no("Install dependencies now?", default=True)
+    else:
+        install = True
+
     target = Path(name)
     if name == ".":
         if any(target.iterdir()):
@@ -156,7 +202,12 @@ def main(argv: list[str] | None = None) -> int:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content)
 
-    print(templates.next_steps(name, pkg, manager, alembic, db))
+    installed = False
+    if install:
+        print(f"\nInstalling dependencies with {manager}...")
+        installed = _run_install(target, manager)
+
+    print(templates.next_steps(name, pkg, manager, alembic, db, installed=installed))
     return 0
 
 

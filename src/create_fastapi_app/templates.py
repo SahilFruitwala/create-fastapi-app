@@ -463,15 +463,27 @@ def render(
 
 
 def next_steps(
-    project: str, pkg: str, manager: str, alembic: bool = True, db: str = "postgres"
+    project: str,
+    pkg: str,
+    manager: str,
+    alembic: bool = True,
+    db: str = "postgres",
+    installed: bool = False,
 ) -> str:
     prefix = "pdm run " if manager == "pdm" else ""
     if manager == "uv":
         install = "uv venv && source .venv/bin/activate && uv pip install -e ."
+        activate = "source .venv/bin/activate"
     elif manager == "pdm":
         install = "pdm install"
+        activate = ""
     else:
         install = "python -m venv .venv && source .venv/bin/activate && pip install -e ."
+        activate = "source .venv/bin/activate"
+    # If we already installed for the user, just remind them to activate the venv.
+    setup_line = f"  {activate}\n" if installed and activate else ""
+    if not installed:
+        setup_line = f"  {install}\n"
     location = "the current directory" if project == "." else f"'{project}/'"
     cd_line = "" if project == "." else f"  cd {project}\n"
     migrate_lines = ""
@@ -490,7 +502,7 @@ def next_steps(
         f"db: {db}, alembic: {'yes' if alembic else 'no'}).\n\n"
         f"Next:\n"
         f"{cd_line}"
-        f"  {install}\n"
+        f"{setup_line}"
         f"{db_hint}"
         f"{migrate_lines}"
         f"  {prefix}uvicorn {pkg}.main:app --reload\n"
