@@ -15,15 +15,14 @@ _FILES: dict[str, str] = {
     "__PKG__/schemas/__init__.py": "",
     "__PKG__/api/__init__.py": "",
     "__PKG__/api/routes/__init__.py": "",
-    "alembic/versions/.gitkeep": "",
 
     ".env": '''PROJECT_NAME="My API"
-DATABASE_URL="postgresql+asyncpg://postgres:postgres@localhost:5432/app"
+DATABASE_URL="__DB_URL__"
 API_V1_PREFIX="/api/v1"
 ''',
 
     ".env.example": '''PROJECT_NAME="My API"
-DATABASE_URL="postgresql+asyncpg://postgres:postgres@localhost:5432/app"
+DATABASE_URL="__DB_URL__"
 API_V1_PREFIX="/api/v1"
 ''',
 
@@ -46,9 +45,9 @@ requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.111",
     "uvicorn[standard]>=0.30",
-    "sqlalchemy>=2.0",
+    "sqlalchemy[asyncio]>=2.0",
     "alembic>=1.13",
-    "asyncpg>=0.29",
+    "__DB_DRIVER__",
     "pydantic-settings>=2.2",
     "pydantic[email]>=2.7",
 ]
@@ -68,7 +67,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     PROJECT_NAME: str = "My API"
-    DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/app"
+    DATABASE_URL: str = "__DB_URL__"
     API_V1_PREFIX: str = "/api/v1"
 
 
@@ -80,11 +79,6 @@ settings = Settings()
 
 class Base(DeclarativeBase):
     pass
-''',
-
-    "__PKG__/db/base.py": '''# Import Base and ALL models here so Alembic autogenerate sees every table.
-from __PKG__.db.base_class import Base  # noqa: F401
-from __PKG__.models.user import User  # noqa: F401
 ''',
 
     "__PKG__/db/session.py": '''from collections.abc import AsyncGenerator
@@ -198,6 +192,18 @@ async def health():
     return {"status": "ok"}
 ''',
 
+}
+
+# --- alembic-specific files (only generated when alembic is enabled) ----------
+
+_ALEMBIC_FILES: dict[str, str] = {
+    "alembic/versions/.gitkeep": "",
+
+    "__PKG__/db/base.py": '''# Import Base and ALL models here so Alembic autogenerate sees every table.
+from __PKG__.db.base_class import Base  # noqa: F401
+from __PKG__.models.user import User  # noqa: F401
+''',
+
     "alembic.ini": '''[alembic]
 script_location = alembic
 prepend_sys_path = .
@@ -260,18 +266,26 @@ target_metadata = Base.metadata
 
 
 def run_migrations_offline() -> None:
+    url = config.get_main_option("sqlalchemy.url")
     context.configure(
-        url=config.get_main_option("sqlalchemy.url"),
+        url=url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        # SQLite can't ALTER most things; batch mode emits copy-and-move DDL.
+        render_as_batch=url.startswith("sqlite"),
     )
     with context.begin_transaction():
         context.run_migrations()
 
 
 def do_run_migrations(connection: Connection) -> None:
-    context.configure(connection=connection, target_metadata=target_metadata)
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        # SQLite can't ALTER most things; batch mode emits copy-and-move DDL.
+        render_as_batch=connection.dialect.name == "sqlite",
+    )
     with context.begin_transaction():
         context.run_migrations()
 
@@ -325,6 +339,21 @@ def downgrade() -> None:
 ''',
 }
 
+# --- supported databases -----------------------------------------------------
+
+_DATABASES: dict[str, dict[str, str]] = {
+    "postgres": {
+        "url": "postgresql+asyncpg://postgres:postgres@localhost:5432/app",
+        "driver": "asyncpg>=0.29",
+        "label": "PostgreSQL (asyncpg)",
+    },
+    "sqlite": {
+        "url": "sqlite+aiosqlite:///./app.db",
+        "driver": "aiosqlite>=0.19",
+        "label": "SQLite (aiosqlite)",
+    },
+}
+
 # --- per-manager setup blocks for the README ---------------------------------
 
 _SETUP = {
@@ -345,24 +374,30 @@ pip install -e .
 }
 
 
-def _readme(project: str, pkg: str, manager: str) -> str:
+def _readme(project: str, pkg: str, manager: str, alembic: bool, db: str) -> str:
     prefix = "pdm run " if manager == "pdm" else ""
-    return f'''# {project}
-
-FastAPI + SQLAlchemy 2.0 (async) + Alembic. Code lives in `{pkg}/`.
-
-## Setup ({manager})
-
-{_SETUP[manager]}
-
-## Database migrations
+    stack = f"FastAPI + SQLAlchemy 2.0 (async, {_DATABASES[db]['label']})"
+    if alembic:
+        stack += " + Alembic"
+    migrations = ""
+    if alembic:
+        migrations = f'''## Database migrations
 
 ```bash
 {prefix}alembic revision --autogenerate -m "initial"
 {prefix}alembic upgrade head
 ```
 
-## Run
+'''
+    return f'''# {project}
+
+{stack}. Code lives in `{pkg}/`.
+
+## Setup ({manager})
+
+{_SETUP[manager]}
+
+{migrations}## Run
 
 ```bash
 {prefix}uvicorn {pkg}.main:app --reload
@@ -372,16 +407,29 @@ Open http://127.0.0.1:8000/docs
 '''
 
 
-def render(project: str, pkg: str, manager: str) -> dict[str, str]:
+def render(
+    project: str, pkg: str, manager: str, alembic: bool = True, db: str = "postgres"
+) -> dict[str, str]:
     """Return {relative_path: file_content} for the new project."""
+    dbcfg = _DATABASES[db]
     out: dict[str, str] = {}
-    for path, body in _FILES.items():
+    files = dict(_FILES)
+    if alembic:
+        files.update(_ALEMBIC_FILES)
+    for path, body in files.items():
+        if not alembic and path == "pyproject.toml":
+            body = body.replace('    "alembic>=1.13",\n', "")
+        body = body.replace("__DB_URL__", dbcfg["url"]).replace(
+            "__DB_DRIVER__", dbcfg["driver"]
+        )
         out[path.replace("__PKG__", pkg)] = body.replace("__PKG__", pkg)
-    out["README.md"] = _readme(project, pkg, manager)
+    out["README.md"] = _readme(project, pkg, manager, alembic, db)
     return out
 
 
-def next_steps(project: str, pkg: str, manager: str) -> str:
+def next_steps(
+    project: str, pkg: str, manager: str, alembic: bool = True, db: str = "postgres"
+) -> str:
     prefix = "pdm run " if manager == "pdm" else ""
     if manager == "uv":
         install = "uv venv && source .venv/bin/activate && uv pip install -e ."
@@ -389,13 +437,26 @@ def next_steps(project: str, pkg: str, manager: str) -> str:
         install = "pdm install"
     else:
         install = "python -m venv .venv && source .venv/bin/activate && pip install -e ."
+    location = "the current directory" if project == "." else f"'{project}/'"
+    cd_line = "" if project == "." else f"  cd {project}\n"
+    migrate_lines = ""
+    if alembic:
+        migrate_lines = (
+            f"  {prefix}alembic revision --autogenerate -m 'initial'\n"
+            f"  {prefix}alembic upgrade head\n"
+        )
+    db_hint = (
+        "  # edit DATABASE_URL in .env, then:\n"
+        if db != "sqlite"
+        else "  # DATABASE_URL in .env points at a local app.db file\n"
+    )
     return (
-        f"\nDone. Created '{project}/' (package: {pkg}, manager: {manager}).\n\n"
+        f"\nDone. Scaffolded {location} (package: {pkg}, manager: {manager}, "
+        f"db: {db}, alembic: {'yes' if alembic else 'no'}).\n\n"
         f"Next:\n"
-        f"  cd {project}\n"
+        f"{cd_line}"
         f"  {install}\n"
-        f"  # edit DATABASE_URL in .env, then:\n"
-        f"  {prefix}alembic revision --autogenerate -m 'initial'\n"
-        f"  {prefix}alembic upgrade head\n"
+        f"{db_hint}"
+        f"{migrate_lines}"
         f"  {prefix}uvicorn {pkg}.main:app --reload\n"
     )
