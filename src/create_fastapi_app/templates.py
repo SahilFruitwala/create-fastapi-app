@@ -26,15 +26,51 @@ DATABASE_URL="__DB_URL__"
 API_V1_PREFIX="/api/v1"
 ''',
 
-    ".gitignore": '''__pycache__/
+    ".gitignore": '''# Byte-compiled / optimized / cache
+__pycache__/
 *.py[cod]
+*$py.class
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Virtual environments
 .venv/
+venv/
+env/
+
+# Environment / secrets
 .env
+.env.*
+!.env.example
+
+# Databases
 *.sqlite3
 *.db
+
+# Package managers
 .pdm-python
+.pdm-build/
+__pypackages__/
+
+# Test / coverage
 .pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+
+# Linters / type checkers
 .ruff_cache/
+.mypy_cache/
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
 ''',
 
     "pyproject.toml": '''[project]
@@ -44,7 +80,6 @@ description = "FastAPI backend"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi[standard]>=0.111",
-    "uvicorn[standard]>=0.30",
     "sqlalchemy[asyncio]>=2.0",
     "alembic>=1.13",
     "__DB_DRIVER__",
