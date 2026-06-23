@@ -43,7 +43,7 @@ version = "0.1.0"
 description = "FastAPI backend"
 requires-python = ">=3.11"
 dependencies = [
-    "fastapi>=0.111",
+    "fastapi[standard]>=0.111",
     "uvicorn[standard]>=0.30",
     "sqlalchemy[asyncio]>=2.0",
     "alembic>=1.13",
